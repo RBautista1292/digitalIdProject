@@ -16,6 +16,8 @@ import string
 import re
 import hashlib
 
+from werkzeug.utils import secure_filename
+
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'res\\files'
 app.config['SECRET_KEY'] = 'D5*F?_1?-d$f*1'
@@ -61,7 +63,6 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
 
     return decorated
-
 
 @app.route('/register', methods=['POST'])
 def register_user():
@@ -125,9 +126,7 @@ def login_user():
         user_data = {
             "uid": user_document['uid'],
             "name": user_document['name'],
-            "email": user_document['email'],
-            "birth_date": user_document['birth_date'],
-            "gender": user_document['gender']
+            "email": user_document['email']
         }
         #actual_blockchain = create_blockchain(user_data, user_document['current_block'])
         #users_collection.find_one_and_update({"email": auth.username}, {'$set': {"current_block": actual_blockchain['hash_block']['current_hash']}})
@@ -166,12 +165,14 @@ def upload_document(current_user):
     while data := document.stream.read(8192):
         sha256hash.update(data)
 
+    document.stream.seek(0)
+
     document_registry = {
         "uid": uid,
         "filename": document.filename,
         "document_type": form_document['tipo_documento'],
-        "view_url": "http://localhost:5000/document/"+uid+"?mode=view",
-        "download_url": "http://localhost:5000/document/" + uid + "?mode=download",
+        "view_url": "http://localhost:5000/document/"+user_document['uid']+"/"+uid+"?mode=view",
+        "download_url": "http://localhost:5000/document/"+user_document['uid']+"/" + uid + "?mode=download",
         "document_hash": sha256hash.hexdigest()
     }
 
@@ -182,7 +183,7 @@ def upload_document(current_user):
 
     Path(app.config['UPLOAD_FOLDER']+"/"+user_document['uid']).mkdir(parents=True, exist_ok=True)
 
-    document.save(os.path.join(app.config['UPLOAD_FOLDER']+"/"+user_document['uid'], document.filename))
+    document.save(os.path.join(app.config['UPLOAD_FOLDER']+"/"+user_document['uid'], secure_filename(document.filename)))
 
     return jsonify({"message": "Documento guardado exitosamente", "data": result}), 201
 
@@ -201,6 +202,9 @@ def access_documents(uid):
     print("User Document: ")
     print(user_document)
 
+    #if not data.get('iss') == 'digitalid_institution'
+
+
     result = document_repositories_collection.find_one({"uid": uid})
     list_documents = result['document_list']
     list_documents = json.loads(dumps(list_documents))
@@ -209,14 +213,15 @@ def access_documents(uid):
         'token': token,
         'user_document': institution_document
     }
+
     if not user_document['uid'] == institution_document['uid']:
         actual_blockchain = create_blockchain(blockchain_data, user_document['current_block'])
         users_collection.find_one_and_update({"uid": uid}, {'$set': {"current_block": actual_blockchain['hash_block']['current_hash']}})
 
     return jsonify({"message": "Documentos extraidos exitosamente", "data": list_documents}), 200
 
-@app.route('/document/<uid>')
-def get_document(uid):
+@app.route('/document/<user_uid>/<uid>')
+def get_document(user_uid, uid):
     print("Current User Token: ")
     print(request.args.get('auth_token'))
     token = request.args.get('auth_token')
@@ -226,7 +231,7 @@ def get_document(uid):
     user_document = data.get('user_data', {})
 
     result = document_repositories_collection.find_one({
-        "uid": user_document['uid'],
+        "uid": user_uid,
         "document_list.uid": uid
     },
 {
@@ -245,9 +250,20 @@ def get_document(uid):
     print(type(document_file_data))
 
     if request.args.get('mode') == "view":
-        return send_from_directory(app.config['UPLOAD_FOLDER']+"/"+user_document['uid'], document_file_data['filename']), 200
+        return send_from_directory(app.config['UPLOAD_FOLDER']+"/"+user_uid, document_file_data['filename']), 200
     if request.args.get('mode') == "download":
-        return send_file(app.config['UPLOAD_FOLDER']+"\\"+user_document['uid']+"\\"+document_file_data['filename'], as_attachment=True), 200
+        return send_file(app.config['UPLOAD_FOLDER']+"\\"+user_uid+"\\"+document_file_data['filename'], as_attachment=True), 200
+
+@app.route('/generate_link', methods=['GET'])
+@token_required
+def generate_link(current_user):
+    print("Current User Token: ")
+    print(current_user)
+    user_document = current_user
+    print("User Document: ")
+    print(user_document)
+
+    return jsonify({"messagge": "Link generado correctamente", "data": "http://localhost:5000/access_documents/"+user_document['uid']}), 200
 
 @app.route('/get_blockchain', methods=['GET'])
 @token_required
